@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>纸张存储系统 · 20进制编解码器</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #0d1117;
+    color: #c9d1d9;
+    min-height: 100vh;
+  }
+  .app { max-width: 980px; margin: 0 auto; padding: 24px 16px 60px; }
+  h1 { font-size: 22px; margin: 0 0 4px; color: #e6edf3; }
+  .sub { color: #7d8590; font-size: 13px; margin-bottom: 20px; line-height: 1.6; }
+  .sub code { background: #161b22; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+  .tabs button {
+    background: transparent; border: 1px solid #30363d; color: #8b949e;
+    padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 14px;
+  }
+  .tabs button.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  .drop {
+    border: 2px dashed #30363d; border-radius: 10px; padding: 34px 20px;
+    text-align: center; color: #7d8590; cursor: pointer;
+    transition: .15s; font-size: 14px;
+  }
+  .drop:hover, .drop.over {
+    border-color: #1f6feb; color: #58a6ff; background: rgba(31,111,235,.06);
+  }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; }
+  .act {
+    background: #21262d; border: 1px solid #30363d; color: #c9d1d9;
+    padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px;
+  }
+  .act:hover:not(:disabled) { background: #30363d; }
+  .act:disabled { opacity: .4; cursor: not-allowed; }
+  .act.primary { background: #238636; border-color: #2ea043; color: #fff; }
+  .act.primary:hover:not(:disabled) { background: #2ea043; }
+  .stats { font-size: 12px; color: #7d8590; margin: 8px 0; font-family: ui-monospace, Consolas, monospace; }
+  .stats .ok { color: #3fb950; }
+  .stats .err { color: #f85149; }
+  pre {
+    background: #010409; border: 1px solid #30363d; border-radius: 8px;
+    padding: 14px; overflow: auto; max-height: 480px; margin: 0;
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    font-size: 12px; line-height: 1.5; white-space: pre; color: #c9d1d9;
+  }
+  textarea {
+    width: 100%; min-height: 220px; background: #010409;
+    border: 1px solid #30363d; border-radius: 8px; color: #c9d1d9;
+    padding: 12px; font-family: ui-monospace, Consolas, monospace;
+    font-size: 12px; line-height: 1.5; resize: vertical;
+  }
+  footer { margin-top: 30px; font-size: 12px; color: #6e7681; text-align: center; line-height: 1.8; }
+
+  @media print {
+    body { background: #fff; color: #000; }
+    .tabs, .actions, .drop, footer, header, .stats, textarea, #panel-decode { display: none !important; }
+    .app { max-width: none; padding: 0; }
+    pre {
+      background: #fff; color: #000; border: none;
+      max-height: none; overflow: visible;
+      font-size: 10px; line-height: 1.3; letter-spacing: .5px;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>纸张存储系统</h1>
+    <div class="sub">
+      把任意文件编译成可手抄 / 可打印的 20 进制纸带（字符集 <code>0-9 A-J</code>，每字 20 bit，每行 8 字带校验）。
+    </div>
+  </header>
+
+  <div class="tabs">
+    <button data-tab="encode" class="active">编码 · 文件 → 纸带</button>
+    <button data-tab="decode">解码 · 纸带 → 文件</button>
+  </div>
+
+  <!-- ============ 编码面板 ============ -->
+  <section id="panel-encode">
+    <div class="drop" id="dropEnc">拖拽文件到这里 · 或点击选择</div>
+    <input type="file" id="fileEnc" hidden>
+
+    <div class="actions">
+      <button class="act" id="btnEncDemo">试个演示</button>
+      <button class="act primary" id="btnEncDownload" disabled>下载纸带 .txt</button>
+      <button class="act" id="btnEncCopy" disabled>复制全文</button>
+      <button class="act" id="btnEncPrint" disabled>打印</button>
+    </div>
+
+    <div class="stats" id="statsEnc">等待文件…</div>
+    <pre id="outEnc">（纸带会显示在这里）</pre>
+  </section>
+
+  <!-- ============ 解码面板 ============ -->
+  <section id="panel-decode" hidden>
+    <div class="drop" id="dropDec">拖拽纸带 .txt 到这里 · 或点击选择</div>
+    <input type="file" id="fileDec" hidden>
+
+    <div style="height:12px"></div>
+    <textarea id="inDec" placeholder="……或者直接把纸带文本粘贴在这里"></textarea>
+
+    <div class="actions">
+      <button class="act primary" id="btnDecRun">解码</button>
+      <button class="act" id="btnDecDownload" disabled>下载还原文件</button>
+      <button class="act" id="btnDecClear">清空</button>
+    </div>
+
+    <div class="stats" id="statsDec">等待纸带…</div>
+  </section>
+
+  <footer>
+    纯前端单文件 · 数据不上传 · 校验和能查出抄错的行<br>
+    字符集 0-9 A-J ／ 每字 20 bit ／ 每行 8 字 ／ 行尾 1 位校验
+  </footer>
+</div>
+
+<script>
+"use strict";
+
+/* ===================== 参数 ===================== */
+const DIGITS         = "0123456789ABCDEFGHIJ";
+const BASE           = 20;
+const WORD_BITS      = 20;
+const CHARS_PER_WORD = 5;
+const WORDS_PER_LINE = 8;
+const ADDR_CHARS     = 5;
+const EMPTY          = "-".repeat(CHARS_PER_WORD);
+const SIGNATURE      = "PAPER-STORAGE v1";
+const MAX_PREVIEW    = 300;
+
+/* ===================== 20 进制基础 ===================== */
+function int2b20(n, width) {
+  width = width || 0;
+  if (n < 0) throw new Error("不支持负数");
+  let s = "";
+  if (n === 0) s = DIGITS[0];
+  else {
+    while (n > 0) {
+      s = DIGITS[n % BASE] + s;
+      n = Math.floor(n / BASE);
+    }
+  }
+  if (width && s.length < width) s = DIGITS[0].repeat(width - s.length) + s;
+  return s;
+}
+
+function b202int(s) {
+  let n = 0;
+  const up = String(s).toUpperCase();
+  for (let i = 0; i < up.length; i++) {
+    const v = DIGITS.indexOf(up[i]);
+    if (v < 0) throw new Error("非法 20 进制字符: " + up[i]);
+    n = n * BASE + v;
+  }
+  return n;
+}
+
+/* ===================== 字节流 <-> 20bit 字 ===================== */
+function bytes2words(data) {
+  const bits = [];
+  for (let k = 0; k < data.length; k++) {
+    const b = data[k];
+    for (let i = 7; i >= 0; i--) bits.push((b >> i) & 1);
+  }
+  const pad = (WORD_BITS - (bits.length % WORD_BITS)) % WORD_BITS;
+  for (let i = 0; i < pad; i++) bits.push(0);
+
+  const words = [];
+  for (let i = 0; i < bits.length; i += WORD_BITS) {
+    let w = 0;
+    for (let j = 0; j < WORD_BITS; j++) w = (w << 1) | bits[i + j];
+    words.push(w);
+  }
+  return { words: words, pad: pad };
+}
+
+function words2bytes(words, pad) {
+  let bits = [];
+  for (let k = 0; k < words.length; k++) {
+    const w = words[k];
+    for (let i = WORD_BITS - 1; i >= 0; i--) bits.push((w >> i) & 1);
+  }
+  if (pad) bits = bits.slice(0, bits.length - pad);
+
+  const out = new Uint8Array(Math.floor(bits.length / 8));
+  for (let i = 0, k = 0; i + 7 < bits.length; i += 8, k++) {
+    let b = 0;
+    for (let j = 0; j < 8; j++) b = (b << 1) | bits[i + j];
+    out[k] = b;
+  }
+  return out;
+}
+
+/* ===================== 校验 ===================== */
+function checksum(cells) {
+  let s = 0;
+  for (let i = 0; i < cells.length; i++) {
+    const c = cells[i];
+    if (c === EMPTY) continue;
+    for (let j = 0; j < c.length; j++) {
+      const v = DIGITS.indexOf(c[j].toUpperCase());
+      if (v >= 0) s += v;
+    }
+  }
+  return DIGITS[s % BASE];
+}
+
+/* ===================== 编码 ===================== */
+function encode(data, name) {
+  const r = bytes2words(data);
+  const words = r.words, pad = r.pad;
+
+  const safeName = String(name || "DATA").replace(/ /g, "%20");
+  const lines = [];
+  lines.push("; " + SIGNATURE);
+  lines.push("; NAME=" + safeName + " BYTES=" + data.length +
+             " WORDS=" + words.length + " PAD=" + pad);
+
+  let head = "; ADDR ";
+  for (let i = 0; i < WORDS_PER_LINE; i++) head += ("W" + i).padEnd(5) + " ";
+  head += "CK";
+  lines.push(head);
+
+  for (let base = 0; base < words.length; base += WORDS_PER_LINE) {
+    const cells = [];
+    for (let i = 0; i < WORDS_PER_LINE; i++) {
+      const w = words[base + i];
+      cells.push(w === undefined ? EMPTY : int2b20(w, CHARS_PER_WORD));
+    }
+    lines.push(int2b20(base, ADDR_CHARS) + " " + cells.join(" ") + " " + checksum(cells));
+  }
+  return lines.join("\n") + "\n";
+}
+
+/* ===================== 解码 ===================== */
+function decode(text) {
+  const meta = {};
+  const cellMap = new Map();
+
+  const rawLines = String(text).split(/\r?\n/);
+  for (let li = 0; li < rawLines.length; li++) {
+    const line = rawLines[li].trim();
+    if (!line) continue;
+
+    if (line[0] === ";" || line[0] === "#") {
+      const toks = line.replace(/^[;#]+/, "").replace(/,/g, " ").split(/\s+/);
+      for (let i = 0; i < toks.length; i++) {
+        const eq = toks[i].indexOf("=");
+        if (eq > 0) {
+          meta[toks[i].slice(0, eq).trim().toUpperCase()] = toks[i].slice(eq + 1).trim();
+        }
+      }
+      continue;
+    }
+
+    const parts = line.split(/\s+/);
+    if (parts.length < 3) continue;
+
+    let addr;
+    try { addr = b202int(parts[0]); }
+    catch (e) { continue; }
+
+    const body = parts.slice(1, parts.length - 1);
+    const ck   = parts[parts.length - 1].toUpperCase();
+
+    if (checksum(body) !== ck) {
+      throw new Error("校验失败 @ 地址 " + parts[0] + " —— 这一行抄错了！");
+    }
+
+    for (let i = 0; i < body.length; i++) {
+      if (body[i] === EMPTY) continue;
+      cellMap.set(addr + i, b202int(body[i]));
+    }
+  }
+
+  if (cellMap.size === 0) return { data: new Uint8Array(0), name: "" };
+
+  const addrs = Array.from(cellMap.keys()).sort(function (a, b) { return a - b; });
+  for (let i = 0; i < addrs.length; i++) {
+    if (addrs[i] !== addrs[0] + i) {
+      throw new Error("地址不连续，中间漏抄了整行（断在 " + addrs[i] + "）");
+    }
+  }
+
+  const words = addrs.map(function (a) { return cellMap.get(a); });
+  const nbytes = parseInt(meta.BYTES || "0", 10);
+  const pad    = parseInt(meta.PAD   || "0", 10);
+
+  let raw = words2bytes(words, pad);
+  if (nbytes > 0) raw = raw.slice(0, nbytes);
+
+  let name = meta.NAME || "";
+  name = name.replace(/%20/g, " ");
+  return { data: raw, name: name };
+}
+
+/* ===================== 工具 ===================== */
+function download(blob, filename) {
+  const a = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+}
+
+function readFileAsBuffer(file) {
+  return new Promise(function (res, rej) {
+    const fr = new FileReader();
+    fr.onload = function () { res(new Uint8Array(fr.result)); };
+    fr.onerror = function () { rej(fr.error); };
+    fr.readAsArrayBuffer(file);
+  });
+}
+
+function readFileAsText(file) {
+  return new Promise(function (res, rej) {
+    const fr = new FileReader();
+    fr.onload = function () { res(fr.result); };
+    fr.onerror = function () { rej(fr.error); };
+    fr.readAsText(file, "utf-8");
+  });
+}
+
+function copyText(t) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(t).then(function () { return true; })
+      .catch(function () { return fallbackCopy(t); });
+  }
+  return Promise.resolve(fallbackCopy(t));
+}
+function fallbackCopy(t) {
+  const ta = document.createElement("textarea");
+  ta.value = t;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+function fmtBytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1024 / 1024).toFixed(2) + " MB";
+}
+
+/* ===================== DOM ===================== */
+const $ = function (s) { return document.querySelector(s); };
+
+const tabButtons = document.querySelectorAll(".tabs button");
+const panelEnc = $("#panel-encode");
+const panelDec = $("#panel-decode");
+
+const dropEnc = $("#dropEnc");
+const fileEnc = $("#fileEnc");
+const outEnc  = $("#outEnc");
+const statsEnc = $("#statsEnc");
+const btnEncDownload = $("#btnEncDownload");
+const btnEncCopy = $("#btnEncCopy");
+const btnEncPrint = $("#btnEncPrint");
+const btnEncDemo = $("#btnEncDemo");
+
+const dropDec = $("#dropDec");
+const fileDec = $("#fileDec");
+const inDec   = $("#inDec");
+const statsDec = $("#statsDec");
+const btnDecRun = $("#btnDecRun");
+const btnDecDownload = $("#btnDecDownload");
+const btnDecClear = $("#btnDecClear");
+
+let paperFull = "";
+let encFileName = "output";
+let decResult = null;
+let decResultName = "restored.bin";
+
+/* -------- Tab 切换 -------- */
+tabButtons.forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    tabButtons.forEach(function (b) { b.classList.remove("active"); });
+    btn.classList.add("active");
+    const t = btn.dataset.tab;
+    panelEnc.hidden = (t !== "encode");
+    panelDec.hidden = (t !== "decode");
+  });
+});
+
+/* -------- 拖拽绑定 -------- */
+function bindDrop(dropEl, inputEl, onFile) {
+  dropEl.addEventListener("click", function () { inputEl.click(); });
+  inputEl.addEventListener("change", function () {
+    if (inputEl.files && inputEl.files[0]) onFile(inputEl.files[0]);
+    inputEl.value = "";
+  });
+  ["dragenter", "dragover"].forEach(function (ev) {
+    dropEl.addEventListener(ev, function (e) {
+      e.preventDefault(); e.stopPropagation();
+      dropEl.classList.add("over");
+    });
+  });
+  ["dragleave", "drop"].forEach(function (ev) {
+    dropEl.addEventListener(ev, function (e) {
+      e.preventDefault(); e.stopPropagation();
+      dropEl.classList.remove("over");
+    });
+  });
+  dropEl.addEventListener("drop", function (e) {
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) onFile(f);
+  });
+}
+
+/* ===================== 编码流程 ===================== */
+function renderPreview(text) {
+  const lines = text.split("\n");
+  if (lines.length > MAX_PREVIEW) {
+    outEnc.textContent = lines.slice(0, MAX_PREVIEW).join("\n")
+      + "\n\n…… 已省略 " + (lines.length - MAX_PREVIEW) +
+        " 行（下载 / 复制 / 打印可得完整内容）";
+  } else {
+    outEnc.textContent = text;
+  }
+}
+
+function doEncode(file) {
+  statsEnc.innerHTML = "正在读取 " + file.name + " …";
+  readFileAsBuffer(file).then(function (buf) {
+    const t0 = performance.now();
+    const text = encode(buf, file.name);
+    const t1 = performance.now();
+
+    paperFull = text;
+    encFileName = file.name + ".paper.txt";
+    renderPreview(text);
+
+    const lineCount = text.split("\n").length - 1;
+    statsEnc.innerHTML =
+      "<span class='ok'>✔ 完成</span> · " +
+      "原名 " + file.name + " · " +
+      "数据 " + fmtBytes(buf.length) + " · " +
+      "字数 " + Math.ceil(buf.length * 8 / WORD_BITS) + " · " +
+      "行数 " + lineCount + " · " +
+      "纸带 " + fmtBytes(new Blob([text]).size) + " · " +
+      "耗时 " + (t1 - t0).toFixed(1) + " ms";
+
+    btnEncDownload.disabled = false;
+    btnEncCopy.disabled = false;
+    btnEncPrint.disabled = false;
+  }).catch(function (e) {
+    statsEnc.innerHTML = "<span class='err'>✘ " + e.message + "</span>";
+  });
+}
+
+bindDrop(dropEnc, fileEnc, doEncode);
+
+btnEncDownload.addEventListener("click", function () {
+  if (!paperFull) return;
+  download(new Blob([paperFull], { type: "text/plain;charset=utf-8" }), encFileName);
+});
+
+btnEncCopy.addEventListener("click", function () {
+  if (!paperFull) return;
+  copyText(paperFull).then(function (ok) {
+    if (ok) {
+      const old = statsEnc.innerHTML;
+      statsEnc.innerHTML = "<span class='ok'>✔ 已复制到剪贴板</span>";
+      setTimeout(function () { statsEnc.innerHTML = old; }, 1500);
+    }
+  });
+});
+
+btnEncPrint.addEventListener("click", function () {
+  if (!paperFull) return;
+  const backup = outEnc.textContent;
+  outEnc.textContent = paperFull;
+  window.print();
+  outEnc.textContent = backup;
+});
+
+btnEncDemo.addEventListener("click", function () {
+  const msg = "纸张存储系统，把数据抄在纸上！";
+  const bytes = new TextEncoder().encode(msg);
+  const fake = new File([bytes], "demo.txt", { type: "text/plain" });
+  doEncode(fake);
+});
+
+/* ===================== 解码流程 ===================== */
+function doDecodeFromText(text, fromName) {
+  try {
+    const t0 = performance.now();
+    const r = decode(text);
+    const t1 = performance.now();
+
+    decResult = r.data;
+    let baseName = r.name || fromName || "restored.bin";
+    baseName = baseName.replace(/\.paper\.txt$/i, "");
+    decResultName = "restored_" + baseName;
+
+    statsDec.innerHTML =
+      "<span class='ok'>✔ 解码成功</span> · " +
+      "还原 " + fmtBytes(r.data.length) + " · " +
+      "文件名 " + decResultName + " · " +
+      "耗时 " + (t1 - t0).toFixed(1) + " ms";
+
+    btnDecDownload.disabled = (r.data.length === 0);
+  } catch (e) {
+    decResult = null;
+    btnDecDownload.disabled = true;
+    statsDec.innerHTML = "<span class='err'>✘ " + e.message + "</span>";
+  }
+}
+
+bindDrop(dropDec, fileDec, function (file) {
+  statsDec.innerHTML = "正在读取 " + file.name + " …";
+  readFileAsText(file).then(function (txt) {
+    inDec.value = txt;
+    doDecodeFromText(txt, file.name);
+  }).catch(function (e) {
+    statsDec.innerHTML = "<span class='err'>✘ " + e.message + "</span>";
+  });
+});
+
+btnDecRun.addEventListener("click", function () {
+  const txt = inDec.value;
+  if (!txt.trim()) {
+    statsDec.innerHTML = "<span class='err'>✘ 纸带是空的</span>";
+    return;
+  }
+  doDecodeFromText(txt, "");
+});
+
+btnDecDownload.addEventListener("click", function () {
+  if (!decResult) return;
+  download(new Blob([decResult], { type: "application/octet-stream" }), decResultName);
+});
+
+btnDecClear.addEventListener("click", function () {
+  inDec.value = "";
+  decResult = null;
+  btnDecDownload.disabled = true;
+  statsDec.textContent = "等待纸带…";
+});
+</script>
+</body>
+</html>
